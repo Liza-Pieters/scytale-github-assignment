@@ -42,7 +42,7 @@ def process_pull_requests():
             checks = []
 
         # Required checks at merge are not yet verified
-        checks_passed = None
+        checks_passed = check_status_checks(checks, pr["merged_at"])
 
         processed_prs.append({
             "PR_NUMBER": pr_number,
@@ -101,7 +101,8 @@ def inspect_pr_checks(pr_number):
 
 
 
-#check whether required commit checks completed successfully
+
+#check whether commit checks completed successfully
 def check_status_checks(checks, merge_date):
     if not checks:
         return None
@@ -125,8 +126,6 @@ def check_status_checks(checks, merge_date):
             return False
 
     return True
-
-
 
 #export processed PR data to CSV
 def export_csv(processed_prs):
