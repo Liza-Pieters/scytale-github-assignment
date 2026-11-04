@@ -2,6 +2,19 @@
 import json
 import csv
 from pathlib import Path
+from datetime import datetime, timezone
+
+
+def parse_github_date(value):
+    if not value:
+        return None
+
+    try:
+        return datetime.fromisoformat(
+            value.replace("Z", "+00:00")
+        ).astimezone(timezone.utc)
+    except (ValueError, TypeError):
+        return None
 
 
 def process_pull_requests():
@@ -18,6 +31,7 @@ def process_pull_requests():
     ]
 
     processed_prs = []
+
     for pr in merged_prs:
         pr_number = pr["number"]
         review_path = Path(f"data/raw/reviews/{pr_number}.json")
@@ -27,7 +41,9 @@ def process_pull_requests():
             with review_path.open("r", encoding="utf-8") as file:
                 reviews = json.load(file)
 
-            cr_passed = check_code_review(reviews, pr["merged_at"])
+            cr_passed = check_code_review(
+                reviews, pr["merged_at"]
+            )
         else:
             #missing review data cannot be treated as False
             cr_passed = None
@@ -42,12 +58,17 @@ def process_pull_requests():
             checks = []
 
         # Required checks at merge are not yet verified
-        checks_passed = check_status_checks(checks, pr["merged_at"])
+        checks_passed = check_status_checks(
+            checks, pr["merged_at"]
+        )
 
         processed_prs.append({
             "PR_NUMBER": pr_number,
             "PR_TITLE": pr["title"],
-            "AUTHOR": pr["user"]["login"] if pr.get("user") else None,
+            "AUTHOR": (
+                pr["user"]["login"]
+                if pr.get("user") else None
+            ),
             "MERGE_DATE": pr["merged_at"],
             "CR_Passed": cr_passed,
             "CHECKS_PASSED": checks_passed
@@ -69,13 +90,20 @@ def process_pull_requests():
 
 #check if at least 1 reviewer approved before merge
 def check_code_review(reviews, merge_date):
+    merge_time = parse_github_date(merge_date)
+
+    if merge_time is None:
+        return None
+
     for review in reviews:
         if review.get("state") != "APPROVED":
             continue
 
-        submitted_at = review.get("submitted_at")
+        submitted_at = parse_github_date(
+            review.get("submitted_at")
+        )
 
-        if submitted_at and submitted_at <= merge_date:
+        if submitted_at and submitted_at <= merge_time:
             return True
 
     return False
@@ -99,33 +127,35 @@ def inspect_pr_checks(pr_number):
 
     return results
 
-
-
-
 #check whether commit checks completed successfully
 def check_status_checks(checks, merge_date):
-    if not checks:
+    merge_time = parse_github_date(merge_date)
+
+    if not checks or merge_time is None:
         return None
 
     required_checks = [
         check for check in checks
-        if check.get("name", "").endswith("/required")
+        if (check.get("name") or "").endswith("/required")
     ]
 
     if not required_checks:
         return None
 
     for check in required_checks:
-        completed_at = check.get("completed_at")
+        completed_at = parse_github_date(
+            check.get("completed_at")
+        )
         conclusion = check.get("conclusion")
 
-        if completed_at is None or completed_at > merge_date:
+        if completed_at is None or completed_at > merge_time:
             return False
 
         if conclusion not in ("success", "neutral", "skipped"):
             return False
 
     return True
+
 
 #export processed PR data to CSV
 def export_csv(processed_prs):
@@ -141,7 +171,9 @@ def export_csv(processed_prs):
         "CHECKS_PASSED"
     ]
 
-    with output_path.open("w", newline="", encoding="utf-8") as file:
+    with output_path.open(
+        "w", newline="", encoding="utf-8"
+    ) as file:
         writer = csv.DictWriter(file, fieldnames=columns)
         writer.writeheader()
         writer.writerows(processed_prs)
@@ -154,13 +186,20 @@ if __name__ == "__main__":
     processed_prs = process_pull_requests()
 
     # Count review results for all merged PRs
-    approved = sum(pr["CR_Passed"] is True for pr in processed_prs)
-    not_approved = sum(pr["CR_Passed"] is False for pr in processed_prs)
-    missing = sum(pr["CR_Passed"] is None for pr in processed_prs)
+    approved = sum(
+        pr["CR_Passed"] is True for pr in processed_prs
+    )
+    not_approved = sum(
+        pr["CR_Passed"] is False for pr in processed_prs
+    )
+    missing = sum(
+        pr["CR_Passed"] is None for pr in processed_prs
+    )
 
     print(f"CR_Passed True: {approved}")
     print(f"CR_Passed False: {not_approved}")
     print(f"Missing review data: {missing}")
+
     print("\nCheck results for PR #190312:")
     print(inspect_pr_checks(190312))
 
